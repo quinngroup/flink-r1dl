@@ -85,6 +85,9 @@ public class R1DL {
         DataSet<String> rawData = env.readTextFile(cmd.getOptionValue("input"));
         DataSet<Tuple2<Long, String>> rawS = DataSetUtils.zipWithIndex(rawData);
 
+        // Process S into a DataSet of tuples in this format:
+        // (row index, column/vector index, value)
+        // (0, (1, 2, 3)) => (0, 0, 1), (0, 1, 2), (0, 2, 3)
         DataSet<Tuple3<Long, Long, Double>> S = rawS.flatMap(
                 new FlatMapFunction<Tuple2<Long, String>, Tuple3<Long, Long, Double>>() {
                     @Override
@@ -101,15 +104,24 @@ public class R1DL {
                 }
         );
 
+        // For each dictionary atom...
         for (int m = 0; m < M; m++) {
             System.out.println(m);
             // Generate a random vector, subtract off its mean, and normalize it.
             DataSet<Tuple2<Long, Double>> uOld = env.fromElements(randomVector(T));
             uOld = uOld.reduceGroup(new MeanNormalize());
 
+            // These iterations learn a single atom.
             IterativeDataSet<Tuple2<Long, Double>> uOldIt = uOld.iterate(maxIterations);
+
+            // P2: Vector-matrix multiplication step. Computes v.
+            // We don't have numpy or other matrix/vector processing methods, so instead
+            // we multiply each value of S by the value of u with the same index as the
+            // current row index of S. Then, we add up all the products that share the same
+            // vector index to get v. Finally, we select the top R elements by value.
             DataSet<Tuple2<Long, Double>> vTopR = getTopV(R, S, uOldIt);
 
+            // P1: Matrix-vector multiplication step. Computes u.
             DataSet<Tuple3<Long, Long, Double>> uNewPre = vTopR.joinWithHuge(S).where(0).equalTo(1)
                     .with(new JoinFunction<Tuple2<Long, Double>, Tuple3<Long, Long, Double>, Tuple3<Long, Long, Double>>() {
                         @Override
@@ -126,7 +138,11 @@ public class R1DL {
                         }
                     });
 
+            // Subtract off the mean and normalize.
             uNew = uNew.reduceGroup(new MeanNormalize());
+
+            // Update for the next iteration.
+            // Calculate the difference in the new and old u vectors, and take the magnitude.
             DataSet<Tuple2<Long, Double>> delta = uNew.joinWithHuge(uOldIt).where(0).equalTo(0)
                     .with(new JoinFunction<Tuple2<Long, Double>, Tuple2<Long, Double>, Tuple2<Long, Double>>() {
                         @Override
@@ -153,6 +169,8 @@ public class R1DL {
                 }
             });
 
+            // Close the iteration. If the magnitude of delta is less than epsilon,
+            // convergence has been achieved and the iterations stop.
             DataSet<Tuple2<Long, Double>> uNewFinal = uOldIt.closeWith(uNew, delta);
 
             uNewFinal.writeAsCsv(file_D.getAbsolutePath() + "." + m,
@@ -166,6 +184,8 @@ public class R1DL {
                     FileSystem.WriteMode.OVERWRITE);
 
             // P4: Deflation step. Update the primary data matrix S.
+            // First, we pair each element of S with the u value that has the same index as the
+            // current row index of S.
             DataSet<Tuple4<Long, Long, Double, Double>> tempS = S.join(uNewFinal).where(0).equalTo(0)
                     .with(new JoinFunction<Tuple3<Long, Long, Double>,
                             Tuple2<Long, Double>, Tuple4<Long, Long, Double, Double>>() {
@@ -176,6 +196,8 @@ public class R1DL {
                         }
                     });
 
+            // We multiply that u value by each element in v, and store the product within the corresponding
+            // S elements that share the same vector position.
             tempS = tempS.joinWithTiny(vFinal).where(1).equalTo(0)
                     .with(new JoinFunction<Tuple4<Long, Long, Double, Double>,
                             Tuple2<Long, Double>, Tuple4<Long, Long, Double, Double>>() {
@@ -186,6 +208,7 @@ public class R1DL {
                         }
                     });
 
+            // Finally, we subtract this product from the value of S.
             S = tempS.map(new MapFunction<Tuple4<Long, Long, Double, Double>, Tuple3<Long, Long, Double>>() {
                 @Override
                 public Tuple3<Long, Long, Double> map(Tuple4<Long, Long, Double, Double> sEl) throws Exception {
@@ -193,24 +216,44 @@ public class R1DL {
                 }
             });
 
+            // Add up all of the differences.
             S = S.groupBy(0, 1).aggregate(Aggregations.SUM, 2);
         }
 
         env.execute("R1DL");
 	}
 
+    /**
+     * Calculate v, and then return the top R elements of v
+     * @param r R
+     * @param s S matrix
+     * @param uOld u
+     * @return Top R elements of v
+     */
     private static DataSet<Tuple2<Long, Double>> getTopV(Long r, DataSet<Tuple3<Long, Long, Double>> s, DataSet<Tuple2<Long, Double>> uOld) {
         DataSet<Tuple2<Long, Double>> v = vectorMatrix(uOld, s);
 
         return getTopR(r, v);
     }
 
+    /**
+     * Sort a vector and get the top R elements.
+     * @param r Number of elements to extract.
+     * @param v Vector
+     * @return Truncated, sorted vector
+     */
     private static DataSet<Tuple2<Long, Double>> getTopR(Long r, DataSet<Tuple2<Long, Double>> v) {
         v = sortV(v);
 
         return v.first(r.intValue());
     }
 
+    /**
+     * Creates a dummy field in a vector (DataSet of (index, value) tuples), uses that field to sort
+     * by value in descending order, then removes the dummy field.
+     * @param v vector
+     * @return sorted vector
+     */
     private static DataSet<Tuple2<Long, Double>> sortV(DataSet<Tuple2<Long, Double>> v) {
         v = v.map(new MapFunction<Tuple2<Long, Double>, Tuple3<Long, Double, Integer>>() {
             @Override
@@ -229,6 +272,12 @@ public class R1DL {
         return v;
     }
 
+    /**
+     * Generate a vector with a certain number of random elements.
+     * Random numbers generated in the interval [0.0, 1.0).
+     * @param numElements Number of elements to generate
+     * @return Random vector
+     */
     @SuppressWarnings("unchecked")
     private static Tuple2<Long, Double>[] randomVector(Integer numElements) {
         Tuple2<Long, Double>[] result = new Tuple2[numElements];
@@ -238,6 +287,11 @@ public class R1DL {
         return result;
     }
 
+    /**
+     * Generate a vector with a certain number of zero elements.
+     * @param numElements Number of elements
+     * @return Vector of zeroes
+     */
     @SuppressWarnings("unchecked")
     private static Tuple2<Long, Double>[] generateZeroSequence(Integer numElements) {
         Tuple2<Long, Double>[] result = new Tuple2[numElements];
@@ -333,6 +387,9 @@ public class R1DL {
         return v;
     }
 
+    /**
+     * For each element of a vector, subtract the mean and divide by the magnitude.
+     */
     private static class MeanNormalize implements GroupReduceFunction<Tuple2<Long, Double>, Tuple2<Long, Double>> {
         @Override
         public void reduce(Iterable<Tuple2<Long, Double>> vector, Collector<Tuple2<Long, Double>> collector)
