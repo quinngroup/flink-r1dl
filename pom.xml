@@ -250,15 +250,11 @@ under the License.
 									</excludes>
 								</filter>
 							</filters>
-							<!-- If you want to use ./bin/flink run <quickstart jar> uncomment the following lines.
-							This will add a Main-Class entry to the manifest file -->
-							<!--
 							<transformers>
 								<transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-									<mainClass>com.github.quinngroup.StreamingJob</mainClass>
+									<mainClass>com.github.quinngroup.R1DL</mainClass>
 								</transformer>
 							</transformers>
-						    -->
 							<createDependencyReducedPom>false</createDependencyReducedPom>
 						</configuration>
 					</execution>
@@ -270,15 +266,13 @@ under the License.
 				<artifactId>maven-compiler-plugin</artifactId>
 				<version>3.1</version>
 				<configuration>
-					<source>1.7</source> <!-- If you want to use Java 8, change this to "1.8" -->
-					<target>1.7</target> <!-- If you want to use Java 8, change this to "1.8" -->
+					<source>1.8</source> <!-- If you want to use Java 8, change this to "1.8" -->
+					<target>1.8</target> <!-- If you want to use Java 8, change this to "1.8" -->
 				</configuration>
 			</plugin>
 		</plugins>
-		
-			
-		<!-- If you want to use Java 8 Lambda Expressions uncomment the following lines -->
-		<!--
+
+
 		<pluginManagement>
 			<plugins>
 				<plugin>
@@ -337,7 +331,5 @@ under the License.
 				</plugin>
 			</plugins>
 		</pluginManagement>
-		-->
-		
 	</build>
 </project>
