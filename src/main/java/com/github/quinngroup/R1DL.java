@@ -19,6 +19,7 @@ import org.apache.flink.util.Collector;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 
 import static java.lang.Math.round;
 
@@ -45,9 +46,15 @@ public class R1DL {
             cmd = parser.parse(options, args);
         } catch (ParseException e) {
             System.out.println(e.getMessage());
-            formatter.printHelp(".../flink run flink-r1dl.jar", options);
+            showHelp(options, formatter);
 
             System.exit(1);
+            return;
+        }
+
+        // show help if option is specified
+        if (cmd.hasOption("help")) {
+            showHelp(options, formatter);
             return;
         }
 
@@ -76,7 +83,12 @@ public class R1DL {
                 cmd.getOptionValue("prefix") + "_z.txt"
         );
 
-        System.out.println(file_z);
+        // Random generator we can reuse. If a seed is specified, use it.
+        final Random generator = new Random();
+        final Long seed = (Long) cmd.getParsedOptionValue("seed");
+        if (seed != null) {
+            generator.setSeed(seed);
+        }
 
         // Initialize the Flink environment.
 		final ExecutionEnvironment env = ExecutionEnvironment.getExecutionEnvironment();
@@ -106,9 +118,8 @@ public class R1DL {
 
         // For each dictionary atom...
         for (int m = 0; m < M; m++) {
-            System.out.println(m);
             // Generate a random vector, subtract off its mean, and normalize it.
-            DataSet<Tuple2<Long, Double>> uOld = env.fromElements(randomVector(T));
+            DataSet<Tuple2<Long, Double>> uOld = env.fromElements(randomVector(T, generator));
             uOld = uOld.reduceGroup(new MeanNormalize());
 
             // These iterations learn a single atom.
@@ -223,6 +234,14 @@ public class R1DL {
         env.execute("R1DL");
 	}
 
+    private static void showHelp(Options options, HelpFormatter formatter) {
+        formatter.printHelp(".../flink run flink-r1dl.jar",
+                "Flictionary Learning: Rank-1 Dictionary Learning in Flink!\n\n",
+                options,
+                "\nhttps://quinngroup.github.io/",
+                true);
+    }
+
     /**
      * Calculate v, and then return the top R elements of v
      * @param r R
@@ -272,6 +291,7 @@ public class R1DL {
         return v;
     }
 
+
     /**
      * Generate a vector with a certain number of random elements.
      * Random numbers generated in the interval [0.0, 1.0).
@@ -280,9 +300,27 @@ public class R1DL {
      */
     @SuppressWarnings("unchecked")
     private static Tuple2<Long, Double>[] randomVector(Integer numElements) {
+        return randomVector(numElements, null);
+    }
+
+    /**
+     * Generate a vector with a certain number of random elements.
+     * Random numbers generated in the interval [0.0, 1.0).
+     * @param numElements Number of elements to generate
+     * @param generator Random object to generate numbers (so the seed can be set)
+     * @return Random vector
+     */
+    @SuppressWarnings("unchecked")
+    private static Tuple2<Long, Double>[] randomVector(Integer numElements, Random generator) {
         Tuple2<Long, Double>[] result = new Tuple2[numElements];
         for (int i = 0; i < numElements; i++) {
-            result[i] = new Tuple2<>((long) i, Math.random());
+            double number;
+            if (generator == null) {
+                number = Math.random();
+            } else {
+                number = generator.nextDouble();
+            }
+            result[i] = new Tuple2<>((long) i, number);
         }
         return result;
     }
@@ -364,6 +402,16 @@ public class R1DL {
                 .desc("Path prefix for output files.")
                 .hasArg()
                 .required()
+                .build());
+        options.addOption(Option.builder("z")
+                .longOpt("seed")
+                .desc("Random seed. (optional)")
+                .hasArg()
+                .type(Number.class)
+                .build());
+        options.addOption(Option.builder("h")
+                .longOpt("help")
+                .desc("Show this help message.")
                 .build());
     }
 
