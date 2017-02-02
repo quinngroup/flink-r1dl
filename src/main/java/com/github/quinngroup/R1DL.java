@@ -17,6 +17,8 @@ import org.apache.flink.core.fs.FileSystem;
 import org.apache.flink.util.Collector;
 
 import java.io.File;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -29,7 +31,9 @@ import static java.lang.Math.round;
  */
 public class R1DL {
 
-	//
+    private static Path temporaryPath;
+
+    //
 	//	Program
 	//
 	public static void main(String[] args) throws Exception {
@@ -82,6 +86,12 @@ public class R1DL {
                 new File(cmd.getOptionValue("output")),
                 cmd.getOptionValue("prefix") + "_z.txt"
         );
+        // Get a random directory in the temporary path
+        // for storing intermediate S matrices.
+        temporaryPath = Paths.get(
+                cmd.getOptionValue("temporary"),
+                "r1dl_data_" + (new Random()).nextInt()
+        );
 
         // Random generator we can reuse. If a seed is specified, use it.
         final Random generator = new Random();
@@ -91,16 +101,16 @@ public class R1DL {
         }
 
         // Initialize the Flink environment.
-		final ExecutionEnvironment env = ExecutionEnvironment.getExecutionEnvironment();
+        final ExecutionEnvironment firstEnv = ExecutionEnvironment.getExecutionEnvironment();
 
         // Read in the input data.
-        DataSet<String> rawData = env.readTextFile(cmd.getOptionValue("input"));
+        DataSet<String> rawData = firstEnv.readTextFile(cmd.getOptionValue("input"));
         DataSet<Tuple2<Long, String>> rawS = DataSetUtils.zipWithIndex(rawData);
 
         // Process S into a DataSet of tuples in this format:
         // (row index, column/vector index, value)
         // (0, (1, 2, 3)) => (0, 0, 1), (0, 1, 2), (0, 2, 3)
-        DataSet<Tuple3<Long, Long, Double>> S = rawS.flatMap(
+        DataSet<Tuple3<Long, Long, Double>> originalS = rawS.flatMap(
                 new FlatMapFunction<Tuple2<Long, String>, Tuple3<Long, Long, Double>>() {
                     @Override
                     public void flatMap(Tuple2<Long, String> raw, Collector<Tuple3<Long, Long, Double>> collector) throws Exception {
@@ -116,8 +126,15 @@ public class R1DL {
                 }
         );
 
+        originalS.writeAsCsv(getTemporarySPath(0), FileSystem.WriteMode.OVERWRITE);
+        firstEnv.execute("R1DL pre-processing");
+
         // For each dictionary atom...
         for (int m = 0; m < M; m++) {
+            final ExecutionEnvironment env = ExecutionEnvironment.getExecutionEnvironment();
+            DataSet<Tuple3<Long, Long, Double>> S = env.readCsvFile(getTemporarySPath(m))
+                    .types(Long.class, Long.class, Double.class);
+
             // Generate a random vector, subtract off its mean, and normalize it.
             DataSet<Tuple2<Long, Double>> uOld = env.fromElements(randomVector(T, generator));
             uOld = uOld.reduceGroup(new MeanNormalize());
@@ -229,9 +246,12 @@ public class R1DL {
 
             // Add up all of the differences.
             S = S.groupBy(0, 1).aggregate(Aggregations.SUM, 2);
+            S.writeAsCsv(getTemporarySPath(m+1), FileSystem.WriteMode.OVERWRITE);
+
+            env.execute("R1DL atom #" + m);
         }
 
-        env.execute("R1DL");
+
 	}
 
     private static void showHelp(Options options, HelpFormatter formatter) {
@@ -240,6 +260,11 @@ public class R1DL {
                 options,
                 "\nhttps://quinngroup.github.io/",
                 true);
+    }
+
+    private static String getTemporarySPath(int m) {
+	    return Paths.get(temporaryPath.toString(), "temp_S." + m).toFile()
+                .getAbsolutePath();
     }
 
     /**
@@ -400,6 +425,12 @@ public class R1DL {
         options.addOption(Option.builder("x")
                 .longOpt("prefix")
                 .desc("Path prefix for output files.")
+                .hasArg()
+                .required()
+                .build());
+        options.addOption(Option.builder("y")
+                .longOpt("temporary")
+                .desc("HDFS or local directory for storing intermediate files.")
                 .hasArg()
                 .required()
                 .build());
