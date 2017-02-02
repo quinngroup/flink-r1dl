@@ -206,7 +206,7 @@ public class R1DL {
 
 			// Find final v and fill in empty spaces in v with zeroes
 			DataSet<Tuple2<Long, Double>> vFinal = getTopV(R, S, uNewFinal);
-			vFinal = vFinal.union(env.fromElements(generateZeroSequence(T))).groupBy(0)
+			vFinal = vFinal.union(env.fromElements(generateZeroSequence(P))).groupBy(0)
 					.aggregate(Aggregations.SUM, 1);
 			vFinal.writeAsCsv(file_z.getAbsolutePath() + "." + m,
 					FileSystem.WriteMode.OVERWRITE);
