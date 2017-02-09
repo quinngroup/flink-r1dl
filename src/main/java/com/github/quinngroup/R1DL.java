@@ -263,8 +263,7 @@ public class R1DL {
 	}
 
 	private static String getTemporarySPath(int m) {
-		return Paths.get(temporaryPath.toString(), "temp_S." + m).toFile()
-				.getAbsolutePath();
+		return Paths.get(temporaryPath.toString(), "temp_S." + m).toString();
 	}
 
 	/**
