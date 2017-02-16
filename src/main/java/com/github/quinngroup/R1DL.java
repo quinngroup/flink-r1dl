@@ -136,7 +136,7 @@ public class R1DL {
 					.types(Long.class, Long.class, Double.class);
 
 			// Generate a random vector, subtract off its mean, and normalize it.
-			DataSet<Tuple2<Long, Double>> uOld = env.fromElements(randomVector(T, generator));
+			DataSet<Tuple2<Long, Double>> uOld = randomVector(env, T, generator);
 			uOld = uOld.reduceGroup(new MeanNormalize());
 
 			// These iterations learn a single atom.
@@ -206,7 +206,7 @@ public class R1DL {
 
 			// Find final v and fill in empty spaces in v with zeroes
 			DataSet<Tuple2<Long, Double>> vFinal = getTopV(R, S, uNewFinal);
-			vFinal = vFinal.union(env.fromElements(generateZeroSequence(P))).groupBy(0)
+			vFinal = vFinal.union(generateZeroSequence(env, P)).groupBy(0)
 					.aggregate(Aggregations.SUM, 1);
 			vFinal.writeAsCsv(file_z.getAbsolutePath() + "." + m,
 					FileSystem.WriteMode.OVERWRITE);
@@ -323,50 +323,59 @@ public class R1DL {
 	 * Generate a vector with a certain number of random elements.
 	 * Random numbers generated in the interval [0.0, 1.0).
 	 *
+	 * @param env Execution environment
 	 * @param numElements Number of elements to generate
 	 * @return Random vector
 	 */
 	@SuppressWarnings("unchecked")
-	private static Tuple2<Long, Double>[] randomVector(Integer numElements) {
-		return randomVector(numElements, null);
+	private static DataSet<Tuple2<Long, Double>> randomVector(ExecutionEnvironment env, Integer numElements) {
+		return randomVector(env, numElements, null);
 	}
 
 	/**
 	 * Generate a vector with a certain number of random elements.
 	 * Random numbers generated in the interval [0.0, 1.0).
 	 *
+	 * @param env Execution environment
 	 * @param numElements Number of elements to generate
 	 * @param generator   Random object to generate numbers (so the seed can be set)
 	 * @return Random vector
 	 */
 	@SuppressWarnings("unchecked")
-	private static Tuple2<Long, Double>[] randomVector(Integer numElements, Random generator) {
-		Tuple2<Long, Double>[] result = new Tuple2[numElements];
-		for (int i = 0; i < numElements; i++) {
-			double number;
-			if (generator == null) {
-				number = Math.random();
-			} else {
-				number = generator.nextDouble();
+	private static DataSet<Tuple2<Long, Double>> randomVector(ExecutionEnvironment env, Integer numElements, Random generator) {
+		DataSet<Long> nums = env.generateSequence(0, numElements - 1);
+
+		return nums.map(new MapFunction<Long, Tuple2<Long, Double>>() {
+			@Override
+			public Tuple2<Long, Double> map(Long i) throws Exception {
+				double number;
+				if (generator == null) {
+					number = Math.random();
+				} else {
+					number = generator.nextDouble();
+				}
+				return new Tuple2<>(i, number);
 			}
-			result[i] = new Tuple2<>((long) i, number);
-		}
-		return result;
+		});
 	}
 
 	/**
 	 * Generate a vector with a certain number of zero elements.
 	 *
+	 * @param env Execution environment
 	 * @param numElements Number of elements
 	 * @return Vector of zeroes
 	 */
 	@SuppressWarnings("unchecked")
-	private static Tuple2<Long, Double>[] generateZeroSequence(Integer numElements) {
-		Tuple2<Long, Double>[] result = new Tuple2[numElements];
-		for (int i = 0; i < numElements; i++) {
-			result[i] = new Tuple2<>((long) i, 0.0);
-		}
-		return result;
+	private static DataSet<Tuple2<Long, Double>> generateZeroSequence(ExecutionEnvironment env, Integer numElements) {
+		DataSet<Long> nums = env.generateSequence(0, numElements - 1);
+
+		return nums.map(new MapFunction<Long, Tuple2<Long, Double>>() {
+			@Override
+			public Tuple2<Long, Double> map(Long i) throws Exception {
+				return new Tuple2<>(i, 0.0);
+			}
+		});
 	}
 
 	/**
